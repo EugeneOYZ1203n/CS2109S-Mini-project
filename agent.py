@@ -134,6 +134,10 @@ class Agent:
                 except Exception:
                     continue
 
+                isDoubleActionPickupCoin = self.is_on_coin(new_state)
+                if isDoubleActionPickupCoin:
+                    new_state = step(curr_state, BaseAction.PICK_UP)
+
                 if new_state.lose:
                     continue
                 
@@ -143,6 +147,8 @@ class Agent:
                     continue
 
                 new_actions = actions + [action]
+                if isDoubleActionPickupCoin:
+                    new_actions = new_actions + [BaseAction.PICK_UP]
                 g = -new_state.score
                 h = self.heuristic_func(new_state)
                 f = g + h
@@ -170,17 +176,6 @@ class Agent:
             mst_val = min(mst_val, self.mst_weight_points(agent_pos, list(filter(None, points))))
 
         return mst_val * 3 - self.get_total_coin_value(state)
-
-    def get_required_positions(self, state: State) -> Tuple[int, int]:
-        if (self.objective_fn == "exit"):
-            return []
-
-        res = []
-        for required_id in state.required.keys():
-            required_pos = state.position.get(required_id)
-            if required_pos:
-                res.append((required_pos.x, required_pos.y))
-        return res
             
     def mst_weight_points(self, agent_pos, points):
         self.mst_calls += 1
@@ -240,8 +235,13 @@ class Agent:
         else:
             return [required_pos + [exit_pos]]
 
+    def is_on_coin(self, state: State):
+        agent_pos = self.get_agent_position(state)
+        coin_pos = set(self.get_coin_positions(state))
+        return agent_pos in coin_pos
+
     def get_total_coin_value(self, state: State):
-        return len(state.rewardable.keys()) * 5
+        return len(state.rewardable.keys()) * 2
     
     def get_total_coin_value_collected(self, state: State):
         return len([id for id in state.rewardable.keys() if not state.position.get(id)]) * 5
@@ -362,8 +362,6 @@ class Agent:
         if phasingExists:
             only_phasing_block = self.remove_blocks_around_ghost(state, neither_block)
 
-            print(only_phasing_block)
-
             if self.isConnected(only_phasing_block, agent_pos, exit_pos, state.width, state.height):
                 only_phasing_works = True
 
@@ -461,6 +459,25 @@ class Agent:
         if not speed_position:
             return None
         return (speed_position.x, speed_position.y)
+    
+    def get_required_positions(self, state: State) -> Tuple[int, int]:
+        if (self.objective_fn == "exit"):
+            return []
+
+        res = []
+        for required_id in state.required.keys():
+            required_pos = state.position.get(required_id)
+            if required_pos:
+                res.append((required_pos.x, required_pos.y))
+        return res
+    
+    def get_coin_positions(self, state: State) -> Tuple[int, int]:
+        res = []
+        for coin_id in state.rewardable.keys():
+            coin_pos = state.position.get(coin_id)
+            if coin_pos:
+                res.append((coin_pos.x, coin_pos.y))
+        return res
 
     def to_base_action(self, a: Action | int | BaseAction) -> BaseAction:
         if isinstance(a, BaseAction):
