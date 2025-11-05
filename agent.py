@@ -1,3 +1,4 @@
+from enum import Enum
 from grid_universe.gym_env import (
     Observation,
     Action,
@@ -11,7 +12,7 @@ from typing import Tuple
 # Core API
 from grid_universe.levels.grid import Level
 from grid_universe.state import State
-from grid_universe.levels.convert import to_state
+from grid_universe.levels.convert import to_state, from_state
 
 from grid_universe.objectives import (
     exit_objective_fn, default_objective_fn
@@ -65,6 +66,8 @@ class Agent:
         self.mst_cache_hits = 0
         self.mst_calls = 0
 
+        self.required_key_ghost_speed = None
+
     def step(self, state: Level | Observation) -> Action:
         self.index += 1
 
@@ -111,7 +114,8 @@ class Agent:
                 print("Completion summary: ")
                 print("Total nodes expanded:", x) 
                 print("Actions to win: ", len(actions))
-                print(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/self.mst_calls:%})")
+                print(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/max(1,self.mst_calls):%})")
+                print("Cache:", self.mst_cache)
                 return actions
             
             if curr_state in visited:
@@ -155,25 +159,15 @@ class Agent:
     ################################################################
 
     def heuristic_func(self, state: State):
-        points = self.get_required_positions(state) + [self.get_closest_exit_position(state)]
-
-        return self.mst_weight_points(self.get_agent_position(state), points) - self.get_total_coin_value(state)
-
-    def get_closest_exit_position(self, state: State):
         agent_pos = self.get_agent_position(state)
 
-        min_distance = float('inf')
-        best = None
+        points_list = self.get_mst_points(state)
+        mst_val = float('inf')
 
-        for exit_id in state.exit.keys():
-            exit_pos = state.position.get(exit_id)
-            if exit_pos:
-                dist = self.manhattan_dist((exit_pos.x, exit_pos.y), agent_pos)
-                if dist < min_distance:
-                    min_distance = dist
-                    best = (exit_pos.x, exit_pos.y)
+        for points in points_list:
+            mst_val = min(mst_val, self.mst_weight_points(agent_pos, list(filter(None, points))))
 
-        return best
+        return mst_val - self.get_total_coin_value(state)
 
     def get_required_positions(self, state: State) -> Tuple[int, int]:
         if (self.objective_fn == "exit"):
@@ -219,6 +213,30 @@ class Agent:
         self.mst_cache[froze_points] = res
         
         return shortest_dist_from_agent + res
+    
+    def get_mst_points(self, state: State):
+        key_pos = self.get_key_position(state)
+        phasing_pos = self.get_phasing_position(state)
+        speed_pos = self.get_phasing_position(state)
+        required_pos = self.get_required_positions(state)
+        exit_pos = self.get_exit_position(state)
+
+        if self.required_key_ghost_speed == self.RC_KGS.OnlyKey and self.exists_key(state):
+            return [required_pos + [key_pos, exit_pos]]
+        elif self.required_key_ghost_speed == self.RC_KGS.OnlyPhasing and self.exists_phasing(state):
+            return [required_pos + [phasing_pos, exit_pos]]
+        elif self.required_key_ghost_speed == self.RC_KGS.EitherKeyOrPhasing:
+            return [required_pos + [key_pos, exit_pos], required_pos + [phasing_pos, exit_pos]]
+        elif self.required_key_ghost_speed == self.RC_KGS.BothKeyAndPhasing:
+            return [required_pos + [phasing_pos, key_pos, exit_pos]]
+        elif self.required_key_ghost_speed == self.RC_KGS.BothSpeedAndPhasing:
+            return [required_pos + [phasing_pos, speed_pos, exit_pos]]
+        elif self.required_key_ghost_speed == self.RC_KGS.EitherKeyOrSpeedAndPhasing:
+            return [required_pos + [phasing_pos, speed_pos, exit_pos], required_pos + [phasing_pos, key_pos, exit_pos]]
+        elif self.required_key_ghost_speed == self.RC_KGS.AllKeySpeedAndPhasing:
+            return [required_pos + [phasing_pos, speed_pos, key_pos, exit_pos]]
+        else:
+            return [required_pos + [exit_pos]]
 
     def get_total_coin_value(self, state: State):
         return len(state.rewardable.keys())
@@ -257,8 +275,17 @@ class Agent:
         self.startingState = startingState
 
         self.portal_pairs = self.get_portal_pairs(self.startingState)
+
+        print("Portal pairs: ", len(self.portal_pairs))
+
         self.valid_use_key_pos_set = self.get_valid_use_key_pos_set(self.startingState)
         self.collectible_pos_set = self.get_collectible_pos_set(self.startingState)
+
+        print("Collectibles: ", len(self.collectible_pos_set))
+        
+        self.required_key_ghost_speed = self.get_required_key_ghost_speed(self.startingState)
+
+        print("Requirement for Speed, Key, Ghost: ", self.required_key_ghost_speed.name)
 
     def get_portal_pairs(self, state: State):
         res = {}
@@ -293,6 +320,85 @@ class Agent:
             res.add((locked_pos.x + x, locked_pos.y + y))
         
         return res
+    
+    class RC_KGS(Enum):
+        Nothing = 0
+        OnlyKey = 1
+        OnlyPhasing = 2
+        EitherKeyOrPhasing = 3
+        BothKeyAndPhasing = 4
+        BothSpeedAndPhasing = 5
+        EitherKeyOrSpeedAndPhasing = 6
+        AllKeySpeedAndPhasing = 7
+
+    def get_required_key_ghost_speed(self, state: State):
+        agent_pos = self.get_agent_position(state)
+        exit_pos = self.get_exit_position(state)
+
+        neither_block = self.getAllStaticBlocking(state)
+        
+        if self.isConnected(neither_block, agent_pos, exit_pos, state.width, state.height):
+            return self.RC_KGS.Nothing
+        
+        keyExists = self.exists_key(state)
+
+        only_key_works = False
+
+        if keyExists:
+            only_key_block = self.remove_door_from_set(state, neither_block)
+
+            if self.isConnected(only_key_block, agent_pos, exit_pos, state.width, state.height):
+                only_key_works = True
+        
+        phasingExists = self.exists_phasing(state)
+
+        only_phasing_works = False
+
+        if phasingExists:
+            only_phasing_block = self.remove_blocks_around_ghost(state, neither_block)
+
+            print(only_phasing_block)
+
+            if self.isConnected(only_phasing_block, agent_pos, exit_pos, state.width, state.height):
+                only_phasing_works = True
+
+        if only_key_works and only_phasing_works:
+            return self.RC_KGS.EitherKeyOrPhasing
+        if only_key_works:
+            return self.RC_KGS.OnlyKey
+        if only_phasing_works:
+            return self.RC_KGS.OnlyPhasing
+
+        speedExists = self.exists_speed(state)
+
+        speed_phasing_works = False
+
+        if phasingExists and speedExists:
+            speed_phasing_block = self.remove_blocks_around_ghost(state, neither_block, is_Speed=True)
+
+            if self.isConnected(speed_phasing_block, agent_pos, exit_pos, state.width, state.height):
+                speed_phasing_works = True
+        
+        key_phasing_works = False
+
+        if keyExists and phasingExists:
+            key_phasing_block = self.remove_blocks_around_ghost(state, only_key_block)
+
+            if self.isConnected(key_phasing_block, agent_pos, exit_pos, state.width, state.height):
+                key_phasing_works = True
+        
+        if speed_phasing_works and key_phasing_works:
+            return self.RC_KGS.EitherKeyOrSpeedAndPhasing
+        if key_phasing_works:
+            return self.RC_KGS.BothKeyAndPhasing
+        if speed_phasing_works:
+            return self.RC_KGS.BothSpeedAndPhasing
+        
+        if keyExists and phasingExists and speedExists:
+            return self.RC_KGS.AllKeySpeedAndPhasing
+
+        return self.RC_KGS.Nothing
+
 
     ################################################################
     #---------------------------------------------------------------
@@ -324,6 +430,32 @@ class Agent:
         agent_id = next(iter(state.agent.keys()), None)
         agent_position = state.position.get(agent_id)
         return (agent_position.x, agent_position.y)
+    
+    def get_exit_position(self, state: State) -> Tuple[int, int]:
+        exit_id = next(iter(state.exit.keys()), None)
+        exit_position = state.position.get(exit_id)
+        return (exit_position.x, exit_position.y)
+    
+    def get_key_position(self, state: State) -> Tuple[int, int]:
+        key_id = next(iter(state.key.keys()), None)
+        key_position = state.position.get(key_id)
+        if not key_position:
+            return None
+        return (key_position.x, key_position.y)
+    
+    def get_phasing_position(self, state: State) -> Tuple[int, int]:
+        phasing_id = next(iter(state.phasing.keys()), None)
+        phasing_position = state.position.get(phasing_id)
+        if not phasing_position:
+            return None
+        return (phasing_position.x, phasing_position.y)
+    
+    def get_speed_position(self, state: State) -> Tuple[int, int]:
+        speed_id = next(iter(state.speed.keys()), None)
+        speed_position = state.position.get(speed_id)
+        if not speed_position:
+            return None
+        return (speed_position.x, speed_position.y)
 
     def to_base_action(self, a: Action | int | BaseAction) -> BaseAction:
         if isinstance(a, BaseAction):
@@ -331,6 +463,92 @@ class Agent:
         if isinstance(a, Action):
             return getattr(BaseAction, a.name)
     
+    ################################################################
+    #---------------------------------------------------------------
+    # Check key and power up necessity
+    #---------------------------------------------------------------
+    ################################################################
+
+    def getAllStaticBlocking(self, state: State):
+        push_set = set(state.pushable.keys())
+        move_set = set(state.moving.keys())
+
+        res = set()
+
+        for blocking_id in state.blocking.keys():
+            is_static = blocking_id not in push_set and blocking_id not in move_set
+            if is_static:
+                blocking_pos = state.position.get(blocking_id)
+                res.add((blocking_pos.x, blocking_pos.y))
+        
+        for locked_id in state.locked.keys():
+            locked_pos = state.position.get(locked_id)
+            res.add((locked_pos.x, locked_pos.y))
+        
+        return res
+
+    def isConnected(self, invalid_pos, start_pos, end_pos, w, h):
+        visited = set()
+
+        def dfs(pos):
+            if pos in invalid_pos:
+                return False
+            if pos in visited:
+                return False
+            visited.add(pos)
+
+            if pos == end_pos:
+                return True
+
+            for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
+                nxt = (pos[0] + dir[0], pos[1] + dir[1])
+
+                if nxt[0] < 0 or nxt[0] >= w:
+                    continue
+                if nxt[1] < 0 or nxt[1] >= h:
+                    continue
+                
+                if dfs(nxt):
+                    return True
+            
+            return False
+
+        return dfs(start_pos)
+
+    def remove_door_from_set(self, state: State, invalid_pos: set):
+        locked_id = next(iter(state.locked.keys()), None)
+        locked_pos = state.position.get(locked_id)
+
+        if not locked_pos:
+            return invalid_pos
+        
+        res = invalid_pos.copy()
+        
+        res.remove((locked_pos.x, locked_pos.y))
+        return res
+    
+    def remove_blocks_around_ghost(self, state: State, invalid_pos: set, is_Speed = False):
+        if not self.exists_phasing(state):
+            return invalid_pos
+        
+        phasing_pos = self.get_phasing_position(state)
+        
+        res = set()
+        for pos in invalid_pos:
+            if self.regular_manhattan_dist(pos, phasing_pos) > 5:
+                res.add(pos)
+        
+        return res
+    
+    def exists_key(self, state: State):
+        return (len(state.key.keys()) > 0)
+    
+    def exists_phasing(self, state: State):
+        return (len(state.phasing.keys()) > 0)
+    
+    def exists_speed(self, state: State):
+        return (len(state.speed.keys()) > 0)
+
     ################################################################
     #---------------------------------------------------------------
     # Cipher classifier
