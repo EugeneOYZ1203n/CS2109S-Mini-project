@@ -62,12 +62,13 @@ class Agent:
         self.objective_fn = None
 
         self.portal_pairs = None
-        self.static_blocking = None
-        self.dynamic_blocking = None
 
-        self.static_blocking_sets = []
+        self.valid_use_key_pos_set = None
+        self.collectible_pos_set = None
 
         self.mst_cache = {}
+        self.mst_cache_hits = 0
+        self.mst_calls = 0
 
     def step(self, state: Level | Observation) -> Action:
         self.index += 1
@@ -123,17 +124,8 @@ class Agent:
         self.startingState = startingState
 
         self.portal_pairs = self.get_portal_pairs(self.startingState)
-
-        print("Portal pairs:", self.portal_pairs)
-
-        self.get_blocking(self.startingState)
-
-        print("Static block:", self.static_blocking)
-        print("Dynamic block:", self.dynamic_blocking)
-
-        self.flood_fill_sets(self.startingState)
-
-        print("Flood fill sets:", self.static_blocking_sets, ", Len:", len(self.static_blocking_sets))
+        self.valid_use_key_pos_set = self.get_valid_use_key_pos_set(self.startingState)
+        self.collectible_pos_set = self.get_collectible_pos_set(self.startingState)
 
     def aStarSearch(self, startingState: State):
         frontier = []  # priority queue (min-heap)
@@ -152,8 +144,10 @@ class Agent:
             x += 1
 
             if curr_state.win:
-                print(x, "nodes expanded") 
-                print(len(self.mst_cache))
+                print("Completion summary: ")
+                print("Total nodes expanded:", x) 
+                print("Actions to win: ", len(actions))
+                print(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/self.mst_calls:%})")
                 return actions
             
             if curr_state in visited:
@@ -161,10 +155,10 @@ class Agent:
             visited.add(curr_state)
 
             for action in BaseAction:
-                if action == BaseAction.PICK_UP and not self.is_agent_on_collectible(curr_state):
+                if action == BaseAction.PICK_UP and not old_agent_pos in self.collectible_pos_set:
                     continue
                 
-                if action == BaseAction.USE_KEY and not self.any_doors_near_agent(curr_state):
+                if action == BaseAction.USE_KEY and not old_agent_pos in self.valid_use_key_pos_set:
                     continue
 
                 try:
@@ -196,45 +190,32 @@ class Agent:
     def heuristic_func(self, state: State):
         points = self.get_required_positions(state) + [self.get_closest_exit_position(state)]
 
-        if (not self.is_in_same_set_as_exit(state)):
-            if (not self.is_phasing(state) and not self.is_holding_onto_key(state)):
-                closest_key_or_phase = self.get_closest_key_or_phase_position_in_set(state)
-                if closest_key_or_phase:
-                    points += [self.get_closest_key_or_phase_position_in_set(state)]
-
         return self.mst_weight_points(self.get_agent_position(state), points) - self.get_total_coin_value(state)
 
-    def to_base_action(self, a: Action | int | BaseAction) -> BaseAction:
-        if isinstance(a, BaseAction):
-            return a
-        if isinstance(a, Action):
-            return getattr(BaseAction, a.name)
-        
-    def is_agent_on_collectible(self, state: State):
-        agent_pos = self.get_agent_position(state)
-
+    def get_collectible_pos_set(self, state: State):
+        res = set()
         for collectible_id in state.collectible.keys():
             collectible_pos = state.position.get(collectible_id)
 
-            if agent_pos == (collectible_pos.x, collectible_pos.y):
-                return True
+            res.add((collectible_pos.x, collectible_pos.y))
+
+        return res
+    
+    def get_valid_use_key_pos_set(self, state: State):
+        locked_id = next(iter(state.locked.keys()), None)
+        locked_pos = state.position.get(locked_id)
+
+        if not locked_pos:
+            return set()
         
-        return False
+        res = set()
 
-    def any_doors_near_agent(self, state: State):
-        agent_pos = self.get_agent_position(state)
-
-        for locked_id in state.locked.keys():
-            locked_pos = state.position.get(locked_id)
-
-            if self.regular_manhattan_dist(agent_pos, (locked_pos.x, locked_pos.y)) <= 1:
-                return True
+        for x, y in [(1,0), (0, 1), (-1, 0), (0, -1)]:
+            res.add((locked_pos.x + x, locked_pos.y + y))
         
-        return False
+        return res
         
     def get_agent_position(self, state: State) -> Tuple[int, int]:
-        # Now, try to get your (the agent's) position from the State representation by reading the position of the agent
-        # Hint: `agent_id` has already been defined
         agent_id = next(iter(state.agent.keys()), None)
         agent_position = state.position.get(agent_id)
         return (agent_position.x, agent_position.y)
@@ -276,138 +257,14 @@ class Agent:
                 if not portal_pair in res and not portal_id in res:
                     res[portal_id] = ((portal_pos_1.x, portal_pos_1.y), (portal_pos_2.x, portal_pos_2.y))
         return res
-    
-    def get_blocking(self, state: State):
-        push_set = set(state.pushable.keys())
-        move_set = set(state.moving.keys())
-
-        self.static_blocking = set()
-        self.dynamic_blocking = []
-
-        for blocking_id in state.blocking.keys():
-            is_static = blocking_id not in push_set and blocking_id not in move_set
-            if is_static:
-                blocking_pos = state.position.get(blocking_id)
-                self.static_blocking.add((blocking_pos.x, blocking_pos.y))
-            else:
-                self.dynamic_blocking.append(blocking_id)
-
-    def flood_fill_sets(self, state: State):
-        self.static_blocking_sets = []
-        visited = set()
-
-        for i in range(state.width):
-            for j in range(state.height):
-                if (i, j) in visited:
-                    continue
-                
-                if (i, j) in self.static_blocking:
-                    continue
-
-                this_set =  {(i, j)}
-
-                que = queue.Queue()
-                que.put((i, j))
-                visited.add((i,j))
-
-                while not que.empty():
-                    curr = que.get()
-
-                    for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
-                        nxt = (curr[0] + dir[0], curr[1] + dir[1])
-
-                        if nxt[0] < 0 or nxt[0] >= state.width:
-                            continue
-                            
-                        if nxt[1] < 0 or nxt[1] >= state.height:
-                            continue
-
-                        if nxt in self.static_blocking:
-                            continue
-                        
-                        if nxt in visited:
-                            continue
-                        visited.add(nxt)
-
-                        this_set.add(nxt)
-                        
-                        que.put(nxt)
-                
-                self.static_blocking_sets.append(this_set)
-
-    def get_agent_static_blocking_set(self, state: State):
-        agent_pos = self.get_agent_position(state)
-        agent_set = None
-
-        for blocking_set in self.static_blocking_sets:
-            if agent_pos in blocking_set:
-                agent_set = blocking_set
-        
-        return agent_set
-
-    def is_in_same_set_as_exit(self, state: State):
-        agent_set = self.get_agent_static_blocking_set(state)
-
-        if agent_set == None:
-            return True ## True value will lead to default operation, false will lead to key or phase ability search
-
-        for exit_id in state.exit.keys():
-            exit_pos = state.position.get(exit_id)
-            if exit_pos:
-                if exit_pos in agent_set:
-                    return True
-        
-        return False
-    
-    def is_holding_onto_key(self, state: State):
-        inventory_id = next(iter(state.inventory.keys()), None)
-        key_set = set(state.key.keys())
-        for item_id in state.inventory[inventory_id].item_ids:
-            if item_id in key_set:
-                return True
-        return False
-    
-    def is_phasing(self, state: State):
-        status_id = next(iter(state.status.keys()), None)
-        effect_set = set(state.status[status_id].effect_ids)
-        for phasing_id in state.phasing.keys():
-            if phasing_id in effect_set:
-                return True
-        return False
-    
-    def get_closest_key_or_phase_position_in_set(self, state: State):
-        agent_pos = self.get_agent_position(state)
-        agent_set = self.get_agent_static_blocking_set(state)
-
-        if agent_set == None:
-            return None
-                
-        min_distance = float('inf')
-        best = None
-
-        for key_id in state.key.keys():
-            key_pos = state.position.get(key_id)
-            if key_pos and (key_pos.x, key_pos.y) in agent_set:
-                dist = self.manhattan_dist((key_pos.x, key_pos.y), agent_pos)
-                if dist < min_distance:
-                    min_distance = dist
-                    best = (key_pos.x, key_pos.y)
-
-        for phasing_id in state.phasing.keys():
-            phasing_pos = state.position.get(phasing_id)
-            if phasing_pos and (phasing_pos.x, phasing_pos.y) in agent_set:
-                dist = self.manhattan_dist((phasing_pos.x, phasing_pos.y), agent_pos)
-                if dist < min_distance:
-                    min_distance = dist
-                    best = (phasing_pos.x, phasing_pos.y)
-        
-        return best
             
     def mst_weight_points(self, agent_pos, points):
+        self.mst_calls += 1
         shortest_dist_from_agent = min([self.manhattan_dist(agent_pos, p) for p in points])
 
         froze_points = frozenset(points)
         if froze_points in self.mst_cache:
+            self.mst_cache_hits += 1
             return shortest_dist_from_agent + self.mst_cache[froze_points]
 
         n = len(points)
@@ -451,11 +308,14 @@ class Agent:
     def regular_manhattan_dist(self, p1, p2):
         return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
     
-    def number_of_required_left(self, state: State):
-        return len(state.required.keys())
-    
     def get_total_coin_value(self, state: State):
         return len(state.rewardable.keys())
+    
+    def to_base_action(self, a: Action | int | BaseAction) -> BaseAction:
+        if isinstance(a, BaseAction):
+            return a
+        if isinstance(a, Action):
+            return getattr(BaseAction, a.name)
     
     def get_cipher_classifier_model(self):
         import base64
