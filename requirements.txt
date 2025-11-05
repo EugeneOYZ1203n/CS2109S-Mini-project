@@ -1,0 +1,15 @@
+numpy==2.3.0
+pandas==2.3.0
+scikit-learn==1.7.0
+matplotlib==3.10
+pillow==11.2.1
+scipy==1.15.3
+sympy==1.14.0
+joblib==1.5.1
+seaborn==0.13
+notebook==7.2
+ipympl
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.0
+torchvision==0.22.0
+grid-universe @ git+https://github.com/rizkiarm/grid-universe.git
