@@ -96,7 +96,7 @@ class Agent:
 
     def aStarSearch(self, startingState: State):
         frontier = []  # priority queue (min-heap)
-        heapq.heappush(frontier, (0, 0, 0, startingState, [])) 
+        heapq.heappush(frontier, (0, 0, 0, 0, startingState, [])) 
         counter = 0
 
         x = 0
@@ -104,7 +104,7 @@ class Agent:
         visited = set()
 
         while frontier:
-            _, old_g, _, curr_state, actions = heapq.heappop(frontier)
+            _, _, _, _, curr_state, actions = heapq.heappop(frontier)
 
             old_agent_pos = self.get_agent_position(curr_state)
                 
@@ -147,8 +147,10 @@ class Agent:
                 h = self.heuristic_func(new_state)
                 f = g + h
 
+                reward = self.get_total_coin_value_collected(new_state)
+
                 counter += 1
-                heapq.heappush(frontier, (f, g, counter, new_state, new_actions))
+                heapq.heappush(frontier, (f, reward, g, counter, new_state, new_actions))
 
         return []
     
@@ -167,7 +169,7 @@ class Agent:
         for points in points_list:
             mst_val = min(mst_val, self.mst_weight_points(agent_pos, list(filter(None, points))))
 
-        return mst_val - self.get_total_coin_value(state)
+        return mst_val * 3 - self.get_total_coin_value(state)
 
     def get_required_positions(self, state: State) -> Tuple[int, int]:
         if (self.objective_fn == "exit"):
@@ -239,7 +241,10 @@ class Agent:
             return [required_pos + [exit_pos]]
 
     def get_total_coin_value(self, state: State):
-        return len(state.rewardable.keys())
+        return len(state.rewardable.keys()) * 5
+    
+    def get_total_coin_value_collected(self, state: State):
+        return len([id for id in state.rewardable.keys() if not state.position.get(id)]) * 5
     
     ################################################################
     #---------------------------------------------------------------
@@ -541,13 +546,13 @@ class Agent:
         return res
     
     def exists_key(self, state: State):
-        return (len(state.key.keys()) > 0)
+        return (len([id for id in state.key.keys() if state.position.get(id)]) > 0)
     
     def exists_phasing(self, state: State):
-        return (len(state.phasing.keys()) > 0)
+        return (len([id for id in state.phasing.keys() if state.position.get(id)]) > 0)
     
     def exists_speed(self, state: State):
-        return (len(state.speed.keys()) > 0)
+        return (len([id for id in state.speed.keys() if state.position.get(id)]) > 0)
 
     ################################################################
     #---------------------------------------------------------------
