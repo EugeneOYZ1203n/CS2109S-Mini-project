@@ -67,6 +67,7 @@ class Agent:
         self.mst_calls = 0
 
         self.required_key_ghost_speed = None
+        self.hasCoins = False
 
     def step(self, state: Level | Observation) -> Action:
         self.index += 1
@@ -134,10 +135,6 @@ class Agent:
                 except Exception:
                     continue
 
-                isDoubleActionPickupCoin = self.is_on_coin(new_state)
-                if isDoubleActionPickupCoin:
-                    new_state = step(curr_state, BaseAction.PICK_UP)
-
                 if new_state.lose:
                     continue
                 
@@ -147,8 +144,6 @@ class Agent:
                     continue
 
                 new_actions = actions + [action]
-                if isDoubleActionPickupCoin:
-                    new_actions = new_actions + [BaseAction.PICK_UP]
                 g = -new_state.score
                 h = self.heuristic_func(new_state)
                 f = g + h
@@ -175,7 +170,10 @@ class Agent:
         for points in points_list:
             mst_val = min(mst_val, self.mst_weight_points(agent_pos, list(filter(None, points))))
 
-        return mst_val * 3 - self.get_total_coin_value(state)
+        if not self.hasCoins:
+            mst_val *= 3
+
+        return mst_val - self.get_total_coin_value(state)
             
     def mst_weight_points(self, agent_pos, points):
         self.mst_calls += 1
@@ -291,6 +289,10 @@ class Agent:
         self.required_key_ghost_speed = self.get_required_key_ghost_speed(self.startingState)
 
         print("Requirement for Speed, Key, Ghost: ", self.required_key_ghost_speed.name)
+
+        self.hasCoins = len(set(self.startingState.rewardable.keys()) - set(self.startingState.required.keys())) > 0
+
+        print("Has Coins: ", self.hasCoins)
 
     def get_portal_pairs(self, state: State):
         res = {}
