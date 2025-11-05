@@ -16,13 +16,8 @@ from grid_universe.levels.convert import to_state
 from grid_universe.objectives import (
     exit_objective_fn, default_objective_fn
 )
-
 import random
-
 import heapq
-
-import queue
-
 
 class Agent:
     """Grid Universe agent template.
@@ -55,7 +50,7 @@ class Agent:
     development, but the grader will instantiate Agent() with no arguments.
     """
 
-    def __init__(self, isDebug = False):
+    def __init__(self):
         self.path = None
         self.startingState = None
         self.index = 0
@@ -88,44 +83,13 @@ class Agent:
             
             self.path = self.aStarSearch(self.startingState)
 
-        # If no path found, just wait
+        # If no path found, just RNG
         if not self.path:
             print("No path found!!")
             return random.choice(list(Action))
 
         # Return next action from the path
         return self.path[self.index] if self.index < len(self.path) else Action.WAIT
-
-    def initialiseLevel(self, level: Level):
-        level.objective_fn = self.initialiseObjectiveFunc(level.objective_fn, level.message)
-        self.initialiseState(to_state(level))
-
-    def initialiseObservation(self, observation: Observation):
-        self.initialiseObjectiveFunc(observation.config.objective_fn, observation.message)
-        print("Observation not implemented yet!")
-        pass
-
-    def initialiseObjectiveFunc(self, objective_fn, message = None):
-        if message:
-            model = self.get_cipher_classifier_model()
-            self.objective_fn = model.predict([message])[0]
-            if (self.objective_fn == "default"):
-                return default_objective_fn
-            else:
-                return exit_objective_fn
-        elif (objective_fn == default_objective_fn):
-            self.objective_fn = "default"
-            return default_objective_fn
-        else:
-            self.objective_fn = "exit"
-            return exit_objective_fn
-
-    def initialiseState(self, startingState: State): 
-        self.startingState = startingState
-
-        self.portal_pairs = self.get_portal_pairs(self.startingState)
-        self.valid_use_key_pos_set = self.get_valid_use_key_pos_set(self.startingState)
-        self.collectible_pos_set = self.get_collectible_pos_set(self.startingState)
 
     def aStarSearch(self, startingState: State):
         frontier = []  # priority queue (min-heap)
@@ -175,51 +139,26 @@ class Agent:
                     continue
 
                 new_actions = actions + [action]
-
                 g = -new_state.score
-
                 h = self.heuristic_func(new_state)
-
                 f = g + h
 
                 counter += 1
                 heapq.heappush(frontier, (f, g, counter, new_state, new_actions))
 
         return []
+    
+    ################################################################
+    #---------------------------------------------------------------
+    # Heuristic
+    #---------------------------------------------------------------
+    ################################################################
 
     def heuristic_func(self, state: State):
         points = self.get_required_positions(state) + [self.get_closest_exit_position(state)]
 
         return self.mst_weight_points(self.get_agent_position(state), points) - self.get_total_coin_value(state)
 
-    def get_collectible_pos_set(self, state: State):
-        res = set()
-        for collectible_id in state.collectible.keys():
-            collectible_pos = state.position.get(collectible_id)
-
-            res.add((collectible_pos.x, collectible_pos.y))
-
-        return res
-    
-    def get_valid_use_key_pos_set(self, state: State):
-        locked_id = next(iter(state.locked.keys()), None)
-        locked_pos = state.position.get(locked_id)
-
-        if not locked_pos:
-            return set()
-        
-        res = set()
-
-        for x, y in [(1,0), (0, 1), (-1, 0), (0, -1)]:
-            res.add((locked_pos.x + x, locked_pos.y + y))
-        
-        return res
-        
-    def get_agent_position(self, state: State) -> Tuple[int, int]:
-        agent_id = next(iter(state.agent.keys()), None)
-        agent_position = state.position.get(agent_id)
-        return (agent_position.x, agent_position.y)
-    
     def get_closest_exit_position(self, state: State):
         agent_pos = self.get_agent_position(state)
 
@@ -245,17 +184,6 @@ class Agent:
             required_pos = state.position.get(required_id)
             if required_pos:
                 res.append((required_pos.x, required_pos.y))
-        return res
-    
-    def get_portal_pairs(self, state: State):
-        res = {}
-        for portal_id in state.portal.keys():
-            portal_pos_1 = state.position.get(portal_id)
-            portal_pair = state.portal[portal_id].pair_entity
-            portal_pos_2 = state.position.get(portal_pair)
-            if portal_pos_1:
-                if not portal_pair in res and not portal_id in res:
-                    res[portal_id] = ((portal_pos_1.x, portal_pos_1.y), (portal_pos_2.x, portal_pos_2.y))
         return res
             
     def mst_weight_points(self, agent_pos, points):
@@ -292,6 +220,85 @@ class Agent:
         
         return shortest_dist_from_agent + res
 
+    def get_total_coin_value(self, state: State):
+        return len(state.rewardable.keys())
+    
+    ################################################################
+    #---------------------------------------------------------------
+    # Initialisation
+    #---------------------------------------------------------------
+    ################################################################
+
+    def initialiseLevel(self, level: Level):
+        level.objective_fn = self.initialiseObjectiveFunc(level.objective_fn, level.message)
+        self.initialiseState(to_state(level))
+
+    def initialiseObservation(self, observation: Observation):
+        self.initialiseObjectiveFunc(observation.config.objective_fn, observation.message)
+        print("Observation not implemented yet!")
+        pass
+
+    def initialiseObjectiveFunc(self, objective_fn, message = None):
+        if message:
+            model = self.get_cipher_classifier_model()
+            self.objective_fn = model.predict([message])[0]
+            if (self.objective_fn == "default"):
+                return default_objective_fn
+            else:
+                return exit_objective_fn
+        elif (objective_fn == default_objective_fn):
+            self.objective_fn = "default"
+            return default_objective_fn
+        else:
+            self.objective_fn = "exit"
+            return exit_objective_fn
+
+    def initialiseState(self, startingState: State): 
+        self.startingState = startingState
+
+        self.portal_pairs = self.get_portal_pairs(self.startingState)
+        self.valid_use_key_pos_set = self.get_valid_use_key_pos_set(self.startingState)
+        self.collectible_pos_set = self.get_collectible_pos_set(self.startingState)
+
+    def get_portal_pairs(self, state: State):
+        res = {}
+        for portal_id in state.portal.keys():
+            portal_pos_1 = state.position.get(portal_id)
+            portal_pair = state.portal[portal_id].pair_entity
+            portal_pos_2 = state.position.get(portal_pair)
+            if portal_pos_1:
+                if not portal_pair in res and not portal_id in res:
+                    res[portal_id] = ((portal_pos_1.x, portal_pos_1.y), (portal_pos_2.x, portal_pos_2.y))
+        return res
+    
+    def get_collectible_pos_set(self, state: State):
+        res = set()
+        for collectible_id in state.collectible.keys():
+            collectible_pos = state.position.get(collectible_id)
+
+            res.add((collectible_pos.x, collectible_pos.y))
+
+        return res
+    
+    def get_valid_use_key_pos_set(self, state: State):
+        locked_id = next(iter(state.locked.keys()), None)
+        locked_pos = state.position.get(locked_id)
+
+        if not locked_pos:
+            return set()
+        
+        res = set()
+
+        for x, y in [(1,0), (0, 1), (-1, 0), (0, -1)]:
+            res.add((locked_pos.x + x, locked_pos.y + y))
+        
+        return res
+
+    ################################################################
+    #---------------------------------------------------------------
+    # Distance functions
+    #---------------------------------------------------------------
+    ################################################################
     def manhattan_dist(self, p1, p2):
         min_dist = self.regular_manhattan_dist(p1, p2)
 
@@ -308,14 +315,27 @@ class Agent:
     def regular_manhattan_dist(self, p1, p2):
         return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
     
-    def get_total_coin_value(self, state: State):
-        return len(state.rewardable.keys())
-    
+    ################################################################
+    #---------------------------------------------------------------
+    # Misc functions
+    #---------------------------------------------------------------
+    ################################################################
+    def get_agent_position(self, state: State) -> Tuple[int, int]:
+        agent_id = next(iter(state.agent.keys()), None)
+        agent_position = state.position.get(agent_id)
+        return (agent_position.x, agent_position.y)
+
     def to_base_action(self, a: Action | int | BaseAction) -> BaseAction:
         if isinstance(a, BaseAction):
             return a
         if isinstance(a, Action):
             return getattr(BaseAction, a.name)
+    
+    ################################################################
+    #---------------------------------------------------------------
+    # Cipher classifier
+    #---------------------------------------------------------------
+    ################################################################
     
     def get_cipher_classifier_model(self):
         import base64
