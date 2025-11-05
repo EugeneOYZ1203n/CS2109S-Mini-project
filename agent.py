@@ -68,6 +68,7 @@ class Agent:
 
         self.required_key_ghost_speed = None
         self.hasCoins = False
+        self.hasSpeed = False
 
     def step(self, state: Level | Observation) -> Action:
         self.index += 1
@@ -172,6 +173,9 @@ class Agent:
 
         if not self.hasCoins:
             mst_val *= 3
+        
+        if self.hasSpeed:
+            mst_val /= 2
 
         return mst_val - self.get_total_coin_value(state)
             
@@ -291,6 +295,7 @@ class Agent:
         print("Requirement for Speed, Key, Ghost: ", self.required_key_ghost_speed.name)
 
         self.hasCoins = len(set(self.startingState.rewardable.keys()) - set(self.startingState.required.keys())) > 0
+        self.hasSpeed = self.exists_speed(self.startingState)
 
         print("Has Coins: ", self.hasCoins)
 
