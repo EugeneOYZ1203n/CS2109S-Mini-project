@@ -20,6 +20,8 @@ from grid_universe.objectives import (
 import random
 import heapq
 
+from functools import lru_cache
+
 class Agent:
     """Grid Universe agent template.
 
@@ -65,6 +67,8 @@ class Agent:
         self.mst_cache = {}
         self.mst_cache_hits = 0
         self.mst_calls = 0
+
+        self.manhattan_calls = 0
 
         self.required_key_ghost_speed = None
 
@@ -114,8 +118,10 @@ class Agent:
                 print("Completion summary: ")
                 print("Total nodes expanded:", x) 
                 print("Actions to win: ", len(actions))
-                print(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/max(1,self.mst_calls):%})")
-                print("Cache:", self.mst_cache)
+                print(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/max(1,self.mst_calls):%}), Size: {len(self.mst_cache)}")
+                print("Manhattan Calls: ", self.manhattan_calls)
+                print("add_point_to_mst cache info: ", self.add_point_to_mst.cache_info())
+                print("summarize_coin_cluster cache info: ", self.summarize_coin_cluster.cache_info())
                 return actions
             
             if curr_state in visited:
@@ -167,20 +173,28 @@ class Agent:
         mst_val = float('inf')
 
         for points in points_list:
-            mst_val = min(mst_val, self.mst_weight_points(agent_pos, list(filter(None, points))))
+            mst_weight, mst_edges = self.mst_weight_points(agent_pos, list(filter(None, points)))
+
+            coin_adjusted_weight = self.coin_adjusted_mst_weight(state, mst_weight, mst_edges, points)
+
+            mst_val = min(mst_val, coin_adjusted_weight)   
+
+        return mst_val - self.get_total_coin_value(state)
+    
+    def heuristic_func_without_coins(self, state: State):
+        agent_pos = self.get_agent_position(state)
+
+        points_list = self.get_mst_points(state)
+        mst_val = float('inf')
+
+        for points in points_list:
+            mst_weight, mst_edges = self.mst_weight_points(agent_pos, list(filter(None, points)))
+
+            coin_adjusted_weight = self.coin_adjusted_mst_weight(state, mst_weight, mst_edges, points)
+
+            mst_val = min(mst_val, mst_weight)   
 
         return mst_val * 3 - self.get_total_coin_value(state)
-
-    def get_required_positions(self, state: State) -> Tuple[int, int]:
-        if (self.objective_fn == "exit"):
-            return []
-
-        res = []
-        for required_id in state.required.keys():
-            required_pos = state.position.get(required_id)
-            if required_pos:
-                res.append((required_pos.x, required_pos.y))
-        return res
             
     def mst_weight_points(self, agent_pos, points):
         self.mst_calls += 1
@@ -189,7 +203,8 @@ class Agent:
         froze_points = frozenset(points)
         if froze_points in self.mst_cache:
             self.mst_cache_hits += 1
-            return shortest_dist_from_agent + self.mst_cache[froze_points]
+            cached_weight, cached_edges = self.mst_cache[froze_points]
+            return (shortest_dist_from_agent + cached_weight, cached_edges)
 
         n = len(points)
         def get_neighbour(index):
@@ -198,23 +213,28 @@ class Agent:
         pq = []
         visited = [False] * n
         res = 0
+        mst_edges = set()
 
-        heapq.heappush(pq, (0,0))
+        heapq.heappush(pq, (0,0, None))
 
         while pq:
-            wt, ind = heapq.heappop(pq)
+            wt, ind, parent = heapq.heappop(pq)
             if visited[ind]:
                 continue
             res += wt
             visited[ind] = True
 
+            if parent is not None:
+                # Add the actual coordinates for the edge
+                mst_edges.add(tuple(sorted((points[ind], points[parent]))))
+
             for v, weight in get_neighbour(ind):
                 if not visited[v]:
-                    heapq.heappush(pq, (weight, v))
+                    heapq.heappush(pq, (weight, v, ind))
 
-        self.mst_cache[froze_points] = res
+        self.mst_cache[froze_points] = (res, mst_edges)
         
-        return shortest_dist_from_agent + res
+        return shortest_dist_from_agent + res, mst_edges
     
     def get_mst_points(self, state: State):
         key_pos = self.get_key_position(state)
@@ -239,9 +259,86 @@ class Agent:
             return [required_pos + [phasing_pos, speed_pos, key_pos, exit_pos]]
         else:
             return [required_pos + [exit_pos]]
+    
+    ################################################################
+    #---------------------------------------------------------------
+    # Coin handling
+    #---------------------------------------------------------------
+    ################################################################
+    
+    def group_adjacent_coins(self, coins_pos):
+        visited = set()
+        groups = []
 
+        def dfs(c, group):
+            for other in coins_pos:
+                if other in visited:
+                    continue
+                if self.regular_manhattan_dist(c, other) <= 1:
+                    visited.add(other)
+                    group.append(other)
+                    dfs(other, group)
+
+        for c in coins_pos:
+            if c not in visited:
+                visited.add(c)
+                group = [c]
+                dfs(c, group)
+                groups.append(group)
+
+        return groups
+    
+    @lru_cache()
+    def add_point_to_mst(self, mst_weight, mst_edges: frozenset, mst_points: frozenset, point):
+        min_new_weight = float('inf')
+        min_new_edges = None
+        for i in mst_points:
+            dist_to_i = self.manhattan_dist(i, point)
+            if min_new_weight > mst_weight + dist_to_i:
+                min_new_weight = mst_weight + dist_to_i
+                min_new_edges = mst_edges | {tuple(sorted((i, point)))}
+            for j in mst_points:
+                if (i, j) not in mst_edges:
+                    continue
+                replace_weight = mst_weight - self.manhattan_dist(i, j) + dist_to_i + self.manhattan_dist(j, point)
+                if min_new_weight > replace_weight:
+                    min_new_weight = replace_weight
+                    min_new_edges = (mst_edges - {(i, j)}) | {tuple(sorted((i, point))), tuple(sorted((j, point)))}
+        
+        return [min_new_weight, min_new_edges]
+    
+    def coin_adjusted_mst_weight(self, state: State, mst_weight, mst_edges, mst_points):
+        init_edges = frozenset(mst_edges)
+        init_points = frozenset(mst_points)
+
+        coins_pos = self.get_coin_positions(state)
+        coin_groups = self.group_adjacent_coins(coins_pos)
+        
+        min_effective_weight = mst_weight
+
+        def dfs(i, _mst_weight, _mst_edges: frozenset, _mst_points: frozenset, accum_value):
+            nonlocal min_effective_weight
+            if i == len(coin_groups):
+                min_effective_weight = min(min_effective_weight, _mst_weight * 3 - accum_value)
+                return
+            value, centroid = self.summarize_coin_cluster(frozenset(coin_groups[i]))
+            new_weight, new_edges = self.add_point_to_mst(_mst_weight, _mst_edges, _mst_points, centroid)
+            dfs(i+1, new_weight, new_edges, _mst_points | {centroid}, accum_value + value)
+            dfs(i+1, _mst_weight, _mst_edges, _mst_points, accum_value)
+
+        dfs(0, mst_weight, init_edges, init_points, 0)
+
+        return min_effective_weight
+
+    @lru_cache()
+    def summarize_coin_cluster(self, group):
+        total_value = len(group) * 5
+        centroid_x = round(sum(x for x, _ in group) / len(group))
+        centroid_y = round(sum(y for _, y in group) / len(group))
+        return [-total_value, (centroid_x, centroid_y)]
+                    
     def get_total_coin_value(self, state: State):
-        return len(state.rewardable.keys()) * 5
+        return len(state.rewardable.keys()) * 2
     
     def get_total_coin_value_collected(self, state: State):
         return len([id for id in state.rewardable.keys() if not state.position.get(id)]) * 5
@@ -362,8 +459,6 @@ class Agent:
         if phasingExists:
             only_phasing_block = self.remove_blocks_around_ghost(state, neither_block)
 
-            print(only_phasing_block)
-
             if self.isConnected(only_phasing_block, agent_pos, exit_pos, state.width, state.height):
                 only_phasing_works = True
 
@@ -424,6 +519,7 @@ class Agent:
         return min_dist
 
     def regular_manhattan_dist(self, p1, p2):
+        self.manhattan_calls += 1
         return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])
     
     ################################################################
@@ -461,6 +557,25 @@ class Agent:
         if not speed_position:
             return None
         return (speed_position.x, speed_position.y)
+    
+    def get_required_positions(self, state: State):
+        if (self.objective_fn == "exit"):
+            return []
+
+        res = []
+        for required_id in state.required.keys():
+            required_pos = state.position.get(required_id)
+            if required_pos:
+                res.append((required_pos.x, required_pos.y))
+        return res
+    
+    def get_coin_positions(self, state: State):
+        res = []
+        for coin_id in state.rewardable.keys():
+            coin_pos = state.position.get(coin_id)
+            if coin_pos:
+                res.append((coin_pos.x, coin_pos.y))
+        return res
 
     def to_base_action(self, a: Action | int | BaseAction) -> BaseAction:
         if isinstance(a, BaseAction):
@@ -540,7 +655,7 @@ class Agent:
         
         res = set()
         for pos in invalid_pos:
-            if self.regular_manhattan_dist(pos, phasing_pos) > 5:
+            if self.regular_manhattan_dist(pos, phasing_pos) > 4:
                 res.add(pos)
         
         return res
