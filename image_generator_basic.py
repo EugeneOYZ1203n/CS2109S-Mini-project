@@ -20,7 +20,7 @@ for class_name in os.listdir(data_dir):
     if not os.path.isdir(class_path) or class_name == "floor":
         continue
 
-    if class_name in {"dragon", "opened", "sleeping", "wolf", "wall", "lava", "spike"}:
+    if class_name in {"dragon", "opened", "sleeping", "wolf", "wall", "lava"}:
         continue
 
     # Prepare save directory
@@ -34,19 +34,18 @@ for class_name in os.listdir(data_dir):
         entity_path = os.path.join(class_path, filename)
         entity_img = Image.open(entity_path).convert("RGBA")
 
-        # Pick a floor image to layer under (could randomize if you have many)
-        for i in range(3):
-            floor_img = random.choice(floor_images)
+        
+        floor_img = random.choice(floor_images)
 
-            # Ensure both are same size — resize if needed
-            if floor_img.size != entity_img.size:
-                floor_img = floor_img.resize(entity_img.size)
+        # Ensure both are same size — resize if needed
+        if floor_img.size != entity_img.size:
+            floor_img = floor_img.resize(entity_img.size)
 
-            # Composite entity on top of floor
-            combined = Image.alpha_composite(floor_img, entity_img)
+        # Composite entity on top of floor
+        combined = Image.alpha_composite(floor_img, entity_img)
 
-            # Save in new_data/<class_name>/
-            save_path = os.path.join(save_dir, f"{i}_{filename}")
-            combined.save(save_path)
+        # Save in new_data/<class_name>/
+        save_path = os.path.join(save_dir, filename)
+        combined.save(save_path)
 
-            print(f"Saved: {save_path}")
+        print(f"Saved: {save_path}")
