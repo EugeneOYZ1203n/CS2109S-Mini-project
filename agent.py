@@ -353,23 +353,25 @@ class Agent:
             return self.RC_KGS.Nothing
         
         keyExists = self.exists_key(state)
+        key_pos = self.get_key_position(state)
 
         only_key_works = False
 
         if keyExists:
             only_key_block = self.remove_door_from_set(state, neither_block)
 
-            if self.isConnected(only_key_block, agent_pos, exit_pos, state.width, state.height):
+            if self.isConnected(only_key_block, agent_pos, exit_pos, state.width, state.height) and self.isConnected(only_key_block, agent_pos, key_pos, state.width, state.height):
                 only_key_works = True
         
         phasingExists = self.exists_phasing(state)
+        phasing_pos = self.get_phasing_position(state)
 
         only_phasing_works = False
 
         if phasingExists:
             only_phasing_block = self.remove_blocks_around_ghost(state, neither_block)
 
-            if self.isConnected(only_phasing_block, agent_pos, exit_pos, state.width, state.height):
+            if self.isConnected(only_phasing_block, agent_pos, exit_pos, state.width, state.height) and self.isConnected(only_phasing_block, agent_pos, phasing_pos, state.width, state.height):
                 only_phasing_works = True
 
         if only_key_works and only_phasing_works:
@@ -378,36 +380,19 @@ class Agent:
             return self.RC_KGS.OnlyKey
         if only_phasing_works:
             return self.RC_KGS.OnlyPhasing
-
-        speedExists = self.exists_speed(state)
-
-        speed_phasing_works = False
-
-        if phasingExists and speedExists:
-            speed_phasing_block = self.remove_blocks_around_ghost(state, neither_block, is_Speed=True)
-
-            if self.isConnected(speed_phasing_block, agent_pos, exit_pos, state.width, state.height):
-                speed_phasing_works = True
         
         key_phasing_works = False
 
         if keyExists and phasingExists:
             key_phasing_block = self.remove_blocks_around_ghost(state, only_key_block)
 
-            if self.isConnected(key_phasing_block, agent_pos, exit_pos, state.width, state.height):
+            if self.isConnected(key_phasing_block, agent_pos, exit_pos, state.width, state.height) and self.isConnected(key_phasing_block, agent_pos, key_pos, state.width, state.height)  and self.isConnected(key_phasing_block, agent_pos, phasing_pos, state.width, state.height):
                 key_phasing_works = True
         
-        if speed_phasing_works and key_phasing_works:
-            return self.RC_KGS.EitherKeyOrSpeedAndPhasing
         if key_phasing_works:
             return self.RC_KGS.BothKeyAndPhasing
-        if speed_phasing_works:
-            return self.RC_KGS.BothSpeedAndPhasing
-        
-        if keyExists and phasingExists and speedExists:
-            return self.RC_KGS.AllKeySpeedAndPhasing
 
-        return self.RC_KGS.Nothing
+        return self.RC_KGS.Nothing # This will underestimate the cost, but I dunno if I can guarantee admissibility for the remaining conditions
 
 
     ################################################################
@@ -519,6 +504,10 @@ class Agent:
     def isConnected(self, invalid_pos, start_pos, end_pos, w, h):
         visited = set()
 
+        portals_pos = set()
+        if len(self.portal_pairs.keys()) > 0:
+            portals_pos = set([self.portal_pairs[key] for key in self.portal_pairs.keys()][0])
+
         def dfs(pos):
             if pos in invalid_pos:
                 return False
@@ -528,6 +517,10 @@ class Agent:
 
             if pos == end_pos:
                 return True
+            
+            if pos in portals_pos:
+                for x in portals_pos:
+                    dfs(x)
 
             for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                 nxt = (pos[0] + dir[0], pos[1] + dir[1])
