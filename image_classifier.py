@@ -74,13 +74,14 @@ loss_fn = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=0.01, momentum=0.9)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 
-num_epochs = 100
+num_epochs = 50
 start_epoch = 0
 
 is_load = True
-is_save_snippet = True
+is_save_snippet = False
+is_save_after_snippet = True
 if is_load:
-    checkpoint_path = "checkpoints/cnn_epoch_200.pth" 
+    checkpoint_path = "checkpoints/cnn_epoch_50.pth" 
 
     checkpoint = torch.load(checkpoint_path)
 
@@ -181,3 +182,14 @@ checkpoint = {
 
 torch.save(checkpoint, os.path.join(save_path, f'cnn_epoch_{epoch+1}.pth'))
 print(f"Checkpoint saved: cnn_epoch_{epoch+1}.pth")
+
+if is_save_after_snippet:
+    loader_snippet = generate_torch_loader_snippet(net)
+            
+    output_path = "img_model_loader_snippet.txt"
+
+    # Write to file
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(loader_snippet)
+
+    print(f"✅ Loader snippet saved to {output_path}")

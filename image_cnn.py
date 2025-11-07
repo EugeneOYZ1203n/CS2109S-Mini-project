@@ -19,7 +19,7 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(32 * 4 * 4, 64) 
         self.fc2 = nn.Linear(64, categories)
 
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(0.3)
 
 
     def forward(self, x): # 3 x 32 x 32
