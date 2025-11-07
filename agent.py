@@ -89,6 +89,10 @@ class Agent:
         self.hasSpeed = False
 
         self.device = 'cpu'
+        self.cipher_model = self.get_cipher_classifier_model()
+        self.image_model = self.get_image_classifier_model(device=self.device)
+
+        self.isDebug = False
 
     def step(self, state: Level | Observation) -> Action:
         self.index += 1
@@ -103,14 +107,14 @@ class Agent:
                 self.initialiseObservation(state)
 
             if not self.startingState:
-                print("No starting state!")
+                self.print_log("No starting state!")
                 return random.choice(list(Action))
             
             self.path = self.aStarSearch(self.startingState)
 
         # If no path found, just RNG
         if not self.path:
-            print("No path found!!")
+            self.print_log("No path found!!")
             return random.choice(list(Action))
 
         # Return next action from the path
@@ -133,13 +137,10 @@ class Agent:
             x += 1
 
             if curr_state.win:
-                print("Completion summary: ")
-                print("Total nodes expanded:", x) 
-                print("Actions to win: ", len(actions))
-                print(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/max(1,self.mst_calls):%}), Size: {len(self.mst_cache)}")
-                print("Manhattan Calls: ", self.manhattan_calls)
-                print("add_point_to_mst cache info: ", self.add_point_to_mst.cache_info())
-                print("summarize_coin_cluster cache info: ", self.summarize_coin_cluster.cache_info())
+                self.print_log("Completion summary: ")
+                self.print_log("Total nodes expanded:", x) 
+                self.print_log(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/max(1,self.mst_calls):%}), Size: {len(self.mst_cache)}")
+                self.print_log("Manhattan Calls: ", self.manhattan_calls)
                 return actions
             
             if curr_state in visited:
@@ -195,28 +196,7 @@ class Agent:
 
         if not self.hasCoins:
             mst_val *= 3
-        
-        if self.hasSpeed:
-            mst_val /= 2
 
-        return mst_val - self.get_total_coin_value(state)
-    
-    def heuristic_func_without_coins(self, state: State):
-        agent_pos = self.get_agent_position(state)
-
-        points_list = self.get_mst_points(state)
-        mst_val = float('inf')
-
-        for points in points_list:
-            mst_weight, mst_edges = self.mst_weight_points(agent_pos, list(filter(None, points)))
-
-            coin_adjusted_weight = self.coin_adjusted_mst_weight(state, mst_weight, mst_edges, points)
-
-            mst_val = min(mst_val, mst_weight)   
-
-        if not self.hasCoins:
-            mst_val *= 3
-        
         if self.hasSpeed:
             mst_val /= 2
 
@@ -302,23 +282,24 @@ class Agent:
         self.initialiseState(to_state(level))
 
     def initialiseObservation(self, observation: Observation):
-        self.initialiseObjectiveFunc(observation["info"]["config"]["objective_fn"], 
+        objective_func_obj = self.initialiseObjectiveFunc(observation["info"]["config"]["objective_fn"], 
                                      observation["info"]["message"])
-        classGrid = self.image_to_class(observation["image"], 
+        classGrid = self.image_to_class(Image.fromarray(observation["image"]), 
                             observation["info"]["config"]["width"], 
                             observation["info"]["config"]["height"])
-        level = self.classGrid_to_level(classGrid)
+        level, agent = self.classGrid_to_level(classGrid, observation["info"]["agent"]["health"]["health"])
+        level.objective_fn = objective_func_obj
+        
         self.initialiseState(to_state(level))
 
     def initialiseObjectiveFunc(self, objective_fn, message = None):
         if message:
-            model = self.get_cipher_classifier_model()
-            self.objective_fn = model.predict([self.cipher_data_prep(message)])[0]
+            self.objective_fn = self.cipher_model.predict([self.cipher_data_prep(message)])[0]
             if (self.objective_fn == "default"):
                 return default_objective_fn
             else:
                 return exit_objective_fn
-        elif (objective_fn == default_objective_fn):
+        elif (objective_fn == default_objective_fn or objective_fn == "default_objective_fn"):
             self.objective_fn = "default"
             return default_objective_fn
         else:
@@ -326,25 +307,27 @@ class Agent:
             return exit_objective_fn
 
     def initialiseState(self, startingState: State): 
+        self.print_log("Objective: ", self.objective_fn)
+
         self.startingState = startingState
 
         self.portal_pairs = self.get_portal_pairs(self.startingState)
 
-        print("Portal pairs: ", len(self.portal_pairs))
+        self.print_log("Portal pairs: ", len(self.portal_pairs))
 
         self.valid_use_key_pos_set = self.get_valid_use_key_pos_set(self.startingState)
         self.collectible_pos_set = self.get_collectible_pos_set(self.startingState)
 
-        print("Collectibles: ", len(self.collectible_pos_set))
+        self.print_log("Num Collectibles: ", len(self.collectible_pos_set))
         
         self.required_key_ghost_speed = self.get_required_key_ghost_speed(self.startingState)
 
-        print("Requirement for Speed, Key, Ghost: ", self.required_key_ghost_speed.name)
+        self.print_log("Requirement for Speed, Key, Ghost: ", self.required_key_ghost_speed.name)
 
         self.hasCoins = len(set(self.startingState.rewardable.keys()) - set(self.startingState.required.keys())) > 0
         self.hasSpeed = self.exists_speed(self.startingState)
 
-        print("Has Coins: ", self.hasCoins)
+        self.print_log("Has Coins: ", self.hasCoins, "| Has Speed: ", self.hasSpeed)
 
     def get_portal_pairs(self, state: State):
         res = {}
@@ -513,9 +496,10 @@ class Agent:
     
     def get_coin_positions(self, state: State) -> Tuple[int, int]:
         res = []
+        required_set = set(self.get_required_positions(state))
         for coin_id in state.rewardable.keys():
             coin_pos = state.position.get(coin_id)
-            if coin_pos:
+            if coin_pos and coin_pos not in required_set:
                 res.append((coin_pos.x, coin_pos.y))
         return res
 
@@ -524,6 +508,10 @@ class Agent:
             return a
         if isinstance(a, Action):
             return getattr(BaseAction, a.name)
+        
+    def print_log(self, *kwargs):
+        if self.isDebug:
+            print(*kwargs)
     
     ################################################################
     #---------------------------------------------------------------
@@ -649,37 +637,35 @@ class Agent:
     #---------------------------------------------------------------
     ################################################################
 
-    def classGrid_to_level(self, labels_grid):
-        objective_fn_val = default_objective_fn
-        if self.objective_fn == "exit":
-            objective_fn_val = exit_objective_fn
-        
+    def classGrid_to_level(self, labels_grid, agent_health=5):        
         h, w = labels_grid.shape
         
         level = Level(
             width=w,
             height=h,
             move_fn=default_move_fn,          
-            objective_fn=objective_fn_val,   
+            objective_fn=default_objective_fn,   
             seed=42,                         
         )
         otherPortal = None
+        agent = None
 
         for row in range(h):
             for col in range(w):
                 class_int = labels_grid[row, col]
-                entity = self.class_to_entity(class_int, other_portal=otherPortal)
+                entity = self.class_to_entity(class_int, other_portal=otherPortal, agent_health=agent_health)
                 if class_int == 15: #Entity is a portal
                     otherPortal = entity
-
+                if class_int == 7: #Entity is a agent
+                    agent = entity
                 level.add((col, row), create_floor())
 
                 if entity:
                     level.add((col, row), entity)
         
-        return level
+        return level, agent
     
-    def class_to_entity(self, class_int, other_portal=None):
+    def class_to_entity(self, class_int, other_portal=None, agent_health=5):
         match class_int: 
             case 0: #Boots
                 return create_speed_effect(multiplier=2, time=5)
@@ -696,7 +682,7 @@ class Agent:
             case 6: #Phasing
                 return create_phasing_effect(time=5)
             case 7: #Agent
-                return create_agent(health=5)
+                return create_agent(health=agent_health)
             case 8: #Key
                 return create_key(key_id="Wut u looking at huh")
             case 9: #Lava
@@ -722,7 +708,7 @@ class Agent:
             case 19: #Ver Pos Robot
                 return create_monster(damage=1, moving_axis=MovingAxis.VERTICAL, moving_direction=1)
             case 20: #Immunity 
-                return create_immunity_effect(time=5)
+                return create_immunity_effect(usage=5)
             case 21: #Spike
                 return create_hazard(AppearanceName.SPIKE, 2, False)
             case 22: #Wall
@@ -730,7 +716,6 @@ class Agent:
                 
     def image_to_class(self, image : Image, grid_width, grid_height):
         image = image.convert("RGB")
-        model = self.get_image_classifier_model(device=self.device)
 
         w, h = image.size
         cell_w, cell_h = w // grid_width, h // grid_height
@@ -755,14 +740,14 @@ class Agent:
 
                     # Transform and predict
                     tensor = transform(cell_img).unsqueeze(0).to(self.device)
-                    output = model(tensor)
+                    output = self.image_model(tensor)
                     pred = output.argmax(dim=1).item()
 
                     labels_grid[row, col] = pred
 
         return labels_grid
 
-    def get_image_classifier_model(device: str = "cpu", dtype: str | None = None):
+    def get_image_classifier_model(self, device: str = "cpu", dtype: str | None = None):
         """
         Return a TorchScript model loaded from an embedded, base64-encoded compressed blob.
         Self-contained: no need for the original Python class.

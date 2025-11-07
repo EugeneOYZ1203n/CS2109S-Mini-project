@@ -1,3 +1,4 @@
+import random
 from grid_universe import renderer
 from grid_universe.gym_env import (
     Observation,
@@ -55,6 +56,45 @@ def build_level_speed_test():
     level.add((13, 1), create_exit())
 
     return to_state(level)
+
+def build_random_level_with_coins(seed: int = None) -> State:
+    """
+    Builds a random level layout with coins, walls, agent, and exit.
+    The layout is procedurally generated but reproducible via seed.
+    """
+    w, h = 8, 6
+    random.seed(seed)
+
+    level = Level(
+        w,
+        h,
+        move_fn=default_move_fn,
+        objective_fn=exit_objective_fn,
+        seed=seed,
+        turn_limit=None,
+    )
+
+    for y in range(level.height):
+        for x in range(level.width):
+            level.add((x, y), create_floor(cost_amount = 3))
+
+    # Add agent at top-left corner
+    level.add((1, 1), create_agent(health=5))
+
+    # Add exit at bottom-right corner
+    level.add((w - 2, h - 2), create_exit())
+
+    # Scatter coins randomly across empty tiles
+    num_coins = random.randint(3, 8)
+    for _ in range(num_coins):
+        x, y = random.randint(1, w - 2), random.randint(1, h - 2)
+        
+        level.add((x, y), create_coin(reward=5))
+
+    def build_level():
+        return to_state(level)
+
+    return build_level
 
 def build_level_hard_AF() -> Level:
     level = Level(width=9, height=7, move_fn=default_move_fn, objective_fn=default_objective_fn, seed=0)
