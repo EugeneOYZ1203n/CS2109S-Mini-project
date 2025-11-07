@@ -191,9 +191,13 @@ class Agent:
         mst_val = float('inf')
 
         for points in points_list:
-            mst_weight, mst_edges = self.mst_weight_points(agent_pos, list(filter(None, points)))
+            mst_val = min(mst_val, self.mst_weight_points(agent_pos, list(filter(None, points))))
 
-            mst_val = min(mst_val, mst_weight)   
+        if not self.hasCoins:
+            mst_val *= 3
+        
+        if self.hasSpeed:
+            mst_val /= 2
 
         return mst_val - self.get_total_coin_value(state)
     
@@ -225,8 +229,7 @@ class Agent:
         froze_points = frozenset(points)
         if froze_points in self.mst_cache:
             self.mst_cache_hits += 1
-            cached_weight, cached_edges = self.mst_cache[froze_points]
-            return (shortest_dist_from_agent + cached_weight, cached_edges)
+            return shortest_dist_from_agent + self.mst_cache[froze_points]
 
         n = len(points)
         def get_neighbour(index):
@@ -235,28 +238,23 @@ class Agent:
         pq = []
         visited = [False] * n
         res = 0
-        mst_edges = set()
 
-        heapq.heappush(pq, (0,0, None))
+        heapq.heappush(pq, (0,0))
 
         while pq:
-            wt, ind, parent = heapq.heappop(pq)
+            wt, ind = heapq.heappop(pq)
             if visited[ind]:
                 continue
             res += wt
             visited[ind] = True
 
-            if parent is not None:
-                # Add the actual coordinates for the edge
-                mst_edges.add(tuple(sorted((points[ind], points[parent]))))
-
             for v, weight in get_neighbour(ind):
                 if not visited[v]:
-                    heapq.heappush(pq, (weight, v, ind))
+                    heapq.heappush(pq, (weight, v))
 
-        self.mst_cache[froze_points] = (res, mst_edges)
+        self.mst_cache[froze_points] = res
         
-        return shortest_dist_from_agent + res, mst_edges
+        return shortest_dist_from_agent + res
     
     def get_mst_points(self, state: State):
         key_pos = self.get_key_position(state)
