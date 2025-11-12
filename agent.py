@@ -139,6 +139,7 @@ class Agent:
             if curr_state.win:
                 self.print_log("Completion summary: ")
                 self.print_log("Total nodes expanded:", x) 
+                self.print_log("Actions to win: ", len(actions))
                 self.print_log(f"MST Cache hits: {self.mst_cache_hits} ({self.mst_cache_hits/max(1,self.mst_calls):%}), Size: {len(self.mst_cache)}")
                 self.print_log("Manhattan Calls: ", self.manhattan_calls)
                 return actions
