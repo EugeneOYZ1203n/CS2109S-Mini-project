@@ -1,4 +1,5 @@
 from enum import Enum
+import math
 from grid_universe.gym_env import (
     Observation,
     Action,
@@ -122,7 +123,7 @@ class Agent:
 
     def aStarSearch(self, startingState: State):
         frontier = []  # priority queue (min-heap)
-        heapq.heappush(frontier, (0, 0, 0, 0, startingState, [])) 
+        heapq.heappush(frontier, (0, 0, 0, startingState, [])) 
         counter = 0
 
         x = 0
@@ -130,7 +131,7 @@ class Agent:
         visited = set()
 
         while frontier:
-            _, _, _, _, curr_state, actions = heapq.heappop(frontier)
+            _, _, _, curr_state, actions = heapq.heappop(frontier)
 
             old_agent_pos = self.get_agent_position(curr_state)
                 
@@ -170,13 +171,11 @@ class Agent:
 
                 new_actions = actions + [action]
                 g = -new_state.score
-                h = self.heuristic_func(new_state)
+                h = self.heuristic_func(new_state) + self.get_tie_breaker(new_state, action)
                 f = g + h
 
-                reward = self.get_total_coin_value_collected(new_state)
-
                 counter += 1
-                heapq.heappush(frontier, (f, reward, g, counter, new_state, new_actions))
+                heapq.heappush(frontier, (f, g, counter, new_state, new_actions))
 
         return []
     
@@ -195,14 +194,28 @@ class Agent:
         for points in points_list:
             mst_val = min(mst_val, self.mst_weight_points(agent_pos, list(filter(None, points))))
 
-        if not self.hasCoins:
-            mst_val *= 3
+        mst_val = self.adjust_manhattan_weights_for_coins_speed(state, mst_val)
 
         if self.hasSpeed:
             mst_val /= 2
 
-        return mst_val - self.get_total_coin_value(state)
-            
+        return mst_val
+    
+    def adjust_manhattan_weights_for_coins_speed(self, state, mst_val):
+        C = self.get_total_coins(state)
+        hasSpeed = self.exists_speed(state)
+
+        num_3cost = max(mst_val - C, 0)
+        num_1cost = min(C, mst_val)
+
+        num_1cost_speed_reduce = min(num_1cost, 4)
+        speed_reduction = num_1cost_speed_reduce * 0.5 + min(mst_val - num_1cost_speed_reduce, 4) * 1.5
+
+        if not hasSpeed:
+            speed_reduction = 0
+
+        return num_3cost * 3 + num_1cost * 1 - speed_reduction
+
     def mst_weight_points(self, agent_pos, points):
         self.mst_calls += 1
         shortest_dist_from_agent = min([self.manhattan_dist(agent_pos, p) for p in points])
@@ -265,12 +278,41 @@ class Agent:
         agent_pos = self.get_agent_position(state)
         coin_pos = set(self.get_coin_positions(state))
         return agent_pos in coin_pos
-
-    def get_total_coin_value(self, state: State):
-        return len(state.rewardable.keys()) * 2
     
-    def get_total_coin_value_collected(self, state: State):
-        return len([id for id in state.rewardable.keys() if not state.position.get(id)]) * 5
+    def get_total_coins(self, state: State):
+        return len(state.rewardable.keys())
+    
+    def get_tie_breaker(self, state: State, action: Action):
+        if action is BaseAction.USE_KEY:
+            return 0.05
+        
+        if action is BaseAction.PICK_UP:
+            return 0.04
+
+        if action is BaseAction.WAIT:
+            return 0
+        
+        dir = (0,0)
+        match action:
+            case BaseAction.UP:
+                dir = (0, 1)
+            case BaseAction.DOWN:
+                dir = (0, -1)
+            case BaseAction.RIGHT:
+                dir = (1, 0)
+            case BaseAction.LEFT:
+                dir = (-1, 0)
+
+        agent_pos = self.get_agent_position(state)
+        exit_pos = self.get_exit_position(state)
+
+        target_dir = (exit_pos[0] - agent_pos[0], exit_pos[1] - agent_pos[1])
+        length = max(math.sqrt(target_dir[0] ** 2 + target_dir[1] ** 2), 1)
+        target_dir_normalised = (target_dir[0] / length, target_dir[1] / length)
+
+        cross_product = dir[0] * target_dir_normalised[1] + dir[1] * target_dir_normalised[0]
+
+        return cross_product
     
     ################################################################
     #---------------------------------------------------------------

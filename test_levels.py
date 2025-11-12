@@ -71,7 +71,7 @@ def build_random_level_with_coins(seed: int = None) -> State:
         move_fn=default_move_fn,
         objective_fn=exit_objective_fn,
         seed=seed,
-        turn_limit=None,
+        turn_limit=50,
     )
 
     for y in range(level.height):
@@ -97,7 +97,7 @@ def build_random_level_with_coins(seed: int = None) -> State:
     return build_level
 
 def build_level_hard_AF() -> Level:
-    level = Level(width=9, height=7, move_fn=default_move_fn, objective_fn=default_objective_fn, seed=0)
+    level = Level(width=9, height=7, move_fn=default_move_fn, objective_fn=default_objective_fn, seed=0, turn_limit=50)
 
     level.add((0, 0), create_agent(health=5))
     for x, y in [(6, 2), (2, 5)]:
