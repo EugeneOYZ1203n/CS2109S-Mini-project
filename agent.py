@@ -196,14 +196,10 @@ class Agent:
 
         mst_val = self.adjust_manhattan_weights_for_coins_speed(state, mst_val)
 
-        if self.hasSpeed:
-            mst_val /= 2
-
         return mst_val
     
     def adjust_manhattan_weights_for_coins_speed(self, state, mst_val):
         C = self.get_total_coins(state)
-        hasSpeed = self.exists_speed(state)
 
         num_3cost = max(mst_val - C, 0)
         num_1cost = min(C, mst_val)
@@ -211,7 +207,7 @@ class Agent:
         num_1cost_speed_reduce = min(num_1cost, 4)
         speed_reduction = num_1cost_speed_reduce * 0.5 + min(mst_val - num_1cost_speed_reduce, 4) * 1.5
 
-        if not hasSpeed:
+        if not self.hasSpeed:
             speed_reduction = 0
 
         return num_3cost * 3 + num_1cost * 1 - speed_reduction
